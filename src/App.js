@@ -149,7 +149,7 @@ function App() {
     setIsTracking(false);
   };
 
-  // --------------------------------------------------
+// --------------------------------------------------
   // Distance and pace recalculation
   // --------------------------------------------------
   useEffect(() => {
@@ -163,6 +163,7 @@ function App() {
       total += turf.distance(from, to, { units: "miles" });
     }
     setLiveDistance(total);
+  }, [livePath, elapsedTime, nextMilestone]);
 
     // Calculate pace (min/mile)
     if (elapsedTime > 0 && total > 0) {
