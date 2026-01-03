@@ -6,11 +6,13 @@ import {
   Popup,
   useMap,
   GeoJSON,
+  Polyline,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import * as turf from "@turf/turf";
 
-// 💡 Configure Leaflet markers
+// 💡 Set up marker icons
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -25,7 +27,7 @@ function ChangeView({ center }) {
   return null;
 }
 
-// 🔹 Updated helper for ORS v2.1 round_trip loops (nested under options)
+// OpenRouteService helper (unchanged)
 async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, ORS_API_KEY) {
   const url = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
 
@@ -41,8 +43,6 @@ async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, 
     format: "geojson",
   };
 
-  console.log("Requesting round trip:", body); // Debug log (optional)
-
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -54,12 +54,10 @@ async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, 
 
   if (!response.ok) {
     const msg = await response.text();
-    console.error("ORS error:", msg);
     throw new Error(`ORS request failed: ${msg}`);
   }
 
-  const data = await response.json();
-  return data;
+  return await response.json();
 }
 
 function App() {
@@ -68,10 +66,25 @@ function App() {
   const [selectedRoute, setSelectedRoute] = useState(0);
   const [distance, setDistance] = useState(1);
   const [loading, setLoading] = useState(true);
-
-  // 🔐 Use secure environment variable
   const ORS_API_KEY = process.env.REACT_APP_ORS_KEY;
 
+  // 🆕 Live tracking
+  const [isTracking, setIsTracking] = useState(false);
+  const [livePath, setLivePath] = useState([]);
+  const [liveDistance, setLiveDistance] = useState(0);
+  const [watchId, setWatchId] = useState(null);
+
+  // 🆕 Timer and pace
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [timerId, setTimerId] = useState(null);
+  const [pace, setPace] = useState(0);
+
+  // 🆕 Milestone alerts
+  const [nextMilestone, setNextMilestone] = useState(0.25);
+
+  // --------------------------------------------------
+  // Initialize location
+  // --------------------------------------------------
   useEffect(() => {
     setLoading(true);
     navigator.geolocation.getCurrentPosition(
@@ -90,18 +103,103 @@ function App() {
     );
   }, []);
 
-  // 🔁 Generate 4 loop routes
+  // --------------------------------------------------
+  // Start / Stop run tracking
+  // --------------------------------------------------
+  const startTracking = () => {
+    if (!position) return;
+    if (isTracking) return;
+
+    // Clear old data
+    setLivePath([]);
+    setLiveDistance(0);
+    setElapsedTime(0);
+    setNextMilestone(0.25);
+
+    // Start GPS
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setLivePath((prev) => [...prev, [latitude, longitude]]);
+      },
+      (err) => console.error("watchPosition error:", err),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+    );
+
+    setIsTracking(true);
+    setWatchId(id);
+
+    // Start timer
+    const start = Date.now();
+    const tid = setInterval(() => {
+      setElapsedTime((Date.now() - start) / 1000);
+    }, 1000);
+    setTimerId(tid);
+  };
+
+  const stopTracking = () => {
+    if (watchId) {
+      navigator.geolocation.clearWatch(watchId);
+      setWatchId(null);
+    }
+    if (timerId) {
+      clearInterval(timerId);
+      setTimerId(null);
+    }
+    setIsTracking(false);
+  };
+
+  // --------------------------------------------------
+  // Distance and pace recalculation
+  // --------------------------------------------------
+  useEffect(() => {
+    if (livePath.length < 2) return;
+
+    // Calculate distance
+    let total = 0;
+    for (let i = 1; i < livePath.length; i++) {
+      const from = turf.point([livePath[i - 1][1], livePath[i - 1][0]]);
+      const to = turf.point([livePath[i][1], livePath[i][0]]);
+      total += turf.distance(from, to, { units: "miles" });
+    }
+    setLiveDistance(total);
+
+    // Calculate pace (min/mile)
+    if (elapsedTime > 0 && total > 0) {
+      setPace((elapsedTime / 60) / total);
+    }
+
+    // Milestone announcement
+    if (total >= nextMilestone) {
+      const msg = `You've reached ${nextMilestone.toFixed(2)} miles`;
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(msg));
+      alert(msg);
+      setNextMilestone(nextMilestone + 0.25);
+    }
+  }, [livePath, elapsedTime]);
+
+  // --------------------------------------------------
+  // Helper for time formatting
+  // --------------------------------------------------
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
+  // --------------------------------------------------
+  // Generate routes (same)
+  // --------------------------------------------------
   const generateRoutes = async () => {
     if (!position) return;
     setLoading(true);
     setRoutes([]);
 
     try {
-      const distanceMeters = distance * 1609.34; // miles ➜ meters
+      const distanceMeters = distance * 1609.34;
 
-      // Require a minimum of 1 mile (1600m) for loops to work
       if (distanceMeters < 1600) {
-        alert("Try at least 1 mile — loops need more distance to generate properly.");
+        alert("Try at least 1 mile — too short for loops.");
         setLoading(false);
         return;
       }
@@ -117,73 +215,70 @@ function App() {
       setSelectedRoute(0);
     } catch (error) {
       console.error("Error generating loop routes:", error);
-      alert("Could not generate loop routes. Please try again with a longer distance or different location.");
+      alert("Could not generate routes. Try again later.");
     } finally {
       setLoading(false);
     }
   };
 
+  // --------------------------------------------------
+  // Loading spinner
+  // --------------------------------------------------
   if (loading) {
     return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "#f5f5f5",
-          color: "#333",
-          fontSize: "1.5rem",
-        }}
-      >
-        <div
-          style={{
-            border: "6px solid #ddd",
-            borderTop: "6px solid #007bff",
-            borderRadius: "50%",
-            width: "50px",
-            height: "50px",
-            animation: "spin 1s linear infinite",
-            marginBottom: "20px",
-          }}
-        ></div>
-        Finding your location…
+      <div style={{
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexDirection: "column",
+      }}>
+        <div style={{
+          border: "6px solid #ddd",
+          borderTop: "6px solid #007bff",
+          borderRadius: "50%",
+          width: "50px",
+          height: "50px",
+          animation: "spin 1s linear infinite",
+        }}></div>
         <style>{`
           @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
           }
         `}</style>
+        <p>Finding your location...</p>
       </div>
     );
   }
 
+  // --------------------------------------------------
+  // Main UI
+  // --------------------------------------------------
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
       {/* Control Panel */}
-      <div
-        style={{
-          position: "absolute",
-          zIndex: 1000,
-          background: "#fff",
-          padding: "10px",
-          borderRadius: "8px",
-          top: "10px",
-          left: "10px",
-          boxShadow: "0 0 5px rgba(0,0,0,0.3)",
-        }}
-      >
+      <div style={{
+        position: "absolute",
+        zIndex: 1000,
+        background: "#fff",
+        padding: "10px",
+        borderRadius: "8px",
+        top: "10px",
+        left: "10px",
+        boxShadow: "0 0 5px rgba(0,0,0,0.3)",
+        width: "260px",
+      }}>
+        {/* Route generator */}
         <div style={{ marginBottom: "8px" }}>
-          <label htmlFor="distance">Route length (miles): </label>
+          <label>Route length (miles): </label>
           <input
-            id="distance"
             type="number"
             value={distance}
             min="0.2"
             step="0.1"
             onChange={(e) => setDistance(parseFloat(e.target.value))}
-            style={{ width: "80px", marginRight: "10px" }}
+            style={{ width: "70px", marginRight: "10px" }}
           />
           <button
             onClick={generateRoutes}
@@ -196,11 +291,51 @@ function App() {
               cursor: "pointer",
             }}
           >
-            Generate Loop Routes
+            Generate
           </button>
         </div>
 
-        {/* Route selection buttons */}
+        {/* Run controls */}
+        <div style={{ marginBottom: "8px" }}>
+          {!isTracking ? (
+            <button
+              onClick={startTracking}
+              style={{
+                backgroundColor: "green",
+                color: "white",
+                borderRadius: "6px",
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Start Tracking
+            </button>
+          ) : (
+            <button
+              onClick={stopTracking}
+              style={{
+                backgroundColor: "red",
+                color: "white",
+                borderRadius: "6px",
+                padding: "6px 10px",
+                cursor: "pointer",
+              }}
+            >
+              Stop Tracking
+            </button>
+          )}
+        </div>
+
+        {/* Live stats */}
+        {isTracking && (
+          <>
+            <p>Distance: <strong>{liveDistance.toFixed(2)} mi</strong></p>
+            <p>Time: <strong>{formatTime(elapsedTime)}</strong></p>
+            <p>Pace: <strong>{pace ? pace.toFixed(2) : "–"} min/mi</strong></p>
+          </>
+        )}
+
+        {/* Route buttons */}
         {routes.length > 1 && (
           <div>
             {routes.map((_, idx) => (
@@ -217,50 +352,37 @@ function App() {
                       : "1px solid #ccc",
                   backgroundColor:
                     idx === selectedRoute ? "#e6f0ff" : "white",
-                  cursor: "pointer",
                 }}
               >
-                Loop {idx + 1}
+                Loop {idx + 1}
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {/* Interactive Map */}
-      <MapContainer
-        center={position}
-        zoom={14}
-        style={{ height: "100%", width: "100%" }}
-      >
+      {/* Map */}
+      <MapContainer center={position} zoom={15} style={{ height: "100%", width: "100%" }}>
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
-        {position && (
-          <>
-            <ChangeView center={position} />
-            <Marker position={position}>
-              <Popup>Start / End Point</Popup>
-            </Marker>
-          </>
-        )}
+        <ChangeView center={position} />
+        <Marker position={position}><Popup>Start / End</Popup></Marker>
 
-        {routes.length > 0 && (
-          <>
-            {routes.map((route, idx) => (
-              <GeoJSON
-                key={idx}
-                data={route}
-                style={{
-                  color: idx === selectedRoute ? "#ff3b3b" : "#888",
-                  weight: idx === selectedRoute ? 7 : 4,
-                  opacity: idx === selectedRoute ? 0.95 : 0.6,
-                }}
-              />
-            ))}
-          </>
-        )}
+        {routes.length > 0 && routes.map((route, idx) => (
+          <GeoJSON
+            key={idx}
+            data={route}
+            style={{
+              color: idx === selectedRoute ? "#ff3b3b" : "#888",
+              weight: idx === selectedRoute ? 7 : 4,
+              opacity: idx === selectedRoute ? 0.95 : 0.6,
+            }}
+          />
+        ))}
+
+        {livePath.length > 1 && <Polyline positions={livePath} color="lime" weight={6} />}
       </MapContainer>
     </div>
   );
