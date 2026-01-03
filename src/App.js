@@ -113,25 +113,53 @@ function App() {
   }, []);
 
   // --------------------------------------------------
+  // 🧭 Improved iPhone‑friendly live tracking
+  // --------------------------------------------------
+  useEffect(() => {
+    let id;
+    let refreshInterval;
+    if (isTracking && position) {
+      const updatePosition = (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        console.log("GPS update:", latitude, longitude, "accuracy:", accuracy);
+        setLivePath((prev) => [...prev, [latitude, longitude]]);
+      };
+
+      const handleError = (err) => {
+        console.warn("GPS error:", err);
+      };
+
+      // Continuous updates
+      id = navigator.geolocation.watchPosition(updatePosition, handleError, {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 5000,
+      });
+      setWatchId(id);
+
+      // Periodic forced refresh (fix Safari stale cache issue)
+      refreshInterval = setInterval(() => {
+        navigator.geolocation.getCurrentPosition(updatePosition, handleError, {
+          enableHighAccuracy: true,
+        });
+      }, 15000);
+    }
+
+    return () => {
+      if (id) navigator.geolocation.clearWatch(id);
+      if (refreshInterval) clearInterval(refreshInterval);
+    };
+  }, [isTracking, position]);
+
+  // --------------------------------------------------
   // Start / Stop tracking
   // --------------------------------------------------
   const startTracking = () => {
     if (!position || isTracking) return;
-
     setLivePath([]);
     setLiveDistance(0);
     setElapsedTime(0);
     setNextMilestone(0.25);
-
-    const id = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setLivePath((prev) => [...prev, [latitude, longitude]]);
-      },
-      (err) => console.error("watchPosition error:", err),
-      { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
-    );
-    setWatchId(id);
     setIsTracking(true);
 
     const start = Date.now();
