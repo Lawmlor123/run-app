@@ -27,9 +27,18 @@ function ChangeView({ center }) {
   return null;
 }
 
-// OpenRouteService helper (unchanged)
-async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, ORS_API_KEY) {
-  const url = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
+// --------------------------------------------------
+// OpenRouteService helper
+// --------------------------------------------------
+async function generateRoundTripRoute(
+  lat,
+  lng,
+  distanceMeters,
+  seedOffset = 0,
+  ORS_API_KEY
+) {
+  const url =
+    "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
 
   const body = {
     coordinates: [[lng, lat]],
@@ -68,22 +77,22 @@ function App() {
   const [loading, setLoading] = useState(true);
   const ORS_API_KEY = process.env.REACT_APP_ORS_KEY;
 
-  // 🆕 Live tracking
+  // 🆕 Live tracking states
   const [isTracking, setIsTracking] = useState(false);
   const [livePath, setLivePath] = useState([]);
   const [liveDistance, setLiveDistance] = useState(0);
   const [watchId, setWatchId] = useState(null);
 
-  // 🆕 Timer and pace
+  // 🕒 Timer + pace
   const [elapsedTime, setElapsedTime] = useState(0);
   const [timerId, setTimerId] = useState(null);
   const [pace, setPace] = useState(0);
 
-  // 🆕 Milestone alerts
+  // 🏁 Milestone alerts
   const [nextMilestone, setNextMilestone] = useState(0.25);
 
   // --------------------------------------------------
-  // Initialize location
+  // Get initial position
   // --------------------------------------------------
   useEffect(() => {
     setLoading(true);
@@ -104,19 +113,16 @@ function App() {
   }, []);
 
   // --------------------------------------------------
-  // Start / Stop run tracking
+  // Start / Stop tracking
   // --------------------------------------------------
   const startTracking = () => {
-    if (!position) return;
-    if (isTracking) return;
+    if (!position || isTracking) return;
 
-    // Clear old data
     setLivePath([]);
     setLiveDistance(0);
     setElapsedTime(0);
     setNextMilestone(0.25);
 
-    // Start GPS
     const id = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
@@ -125,11 +131,9 @@ function App() {
       (err) => console.error("watchPosition error:", err),
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
     );
-
-    setIsTracking(true);
     setWatchId(id);
+    setIsTracking(true);
 
-    // Start timer
     const start = Date.now();
     const tid = setInterval(() => {
       setElapsedTime((Date.now() - start) / 1000);
@@ -149,13 +153,13 @@ function App() {
     setIsTracking(false);
   };
 
-// --------------------------------------------------
-  // Distance and pace recalculation
+  // --------------------------------------------------
+  // Distance + pace recalculation (inside one effect)
   // --------------------------------------------------
   useEffect(() => {
     if (livePath.length < 2) return;
 
-    // Calculate distance
+    // Distance
     let total = 0;
     for (let i = 1; i < livePath.length; i++) {
       const from = turf.point([livePath[i - 1][1], livePath[i - 1][0]]);
@@ -163,24 +167,23 @@ function App() {
       total += turf.distance(from, to, { units: "miles" });
     }
     setLiveDistance(total);
-  }, [livePath, elapsedTime, nextMilestone]);
 
-    // Calculate pace (min/mile)
+    // Pace
     if (elapsedTime > 0 && total > 0) {
       setPace((elapsedTime / 60) / total);
     }
 
-    // Milestone announcement
+    // Milestone
     if (total >= nextMilestone) {
       const msg = `You've reached ${nextMilestone.toFixed(2)} miles`;
       window.speechSynthesis.speak(new SpeechSynthesisUtterance(msg));
       alert(msg);
-      setNextMilestone(nextMilestone + 0.25);
+      setNextMilestone((n) => n + 0.25);
     }
-  }, [livePath, elapsedTime]);
+  }, [livePath, elapsedTime, nextMilestone]);
 
   // --------------------------------------------------
-  // Helper for time formatting
+  // Helper: format time
   // --------------------------------------------------
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -189,7 +192,7 @@ function App() {
   };
 
   // --------------------------------------------------
-  // Generate routes (same)
+  // Generate routes
   // --------------------------------------------------
   const generateRoutes = async () => {
     if (!position) return;
@@ -198,7 +201,6 @@ function App() {
 
     try {
       const distanceMeters = distance * 1609.34;
-
       if (distanceMeters < 1600) {
         alert("Try at least 1 mile — too short for loops.");
         setLoading(false);
@@ -227,21 +229,25 @@ function App() {
   // --------------------------------------------------
   if (loading) {
     return (
-      <div style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-      }}>
-        <div style={{
-          border: "6px solid #ddd",
-          borderTop: "6px solid #007bff",
-          borderRadius: "50%",
-          width: "50px",
-          height: "50px",
-          animation: "spin 1s linear infinite",
-        }}></div>
+      <div
+        style={{
+          height: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            border: "6px solid #ddd",
+            borderTop: "6px solid #007bff",
+            borderRadius: "50%",
+            width: "50px",
+            height: "50px",
+            animation: "spin 1s linear infinite",
+          }}
+        ></div>
         <style>{`
           @keyframes spin {
             0% { transform: rotate(0deg); }
@@ -254,22 +260,24 @@ function App() {
   }
 
   // --------------------------------------------------
-  // Main UI
+  // UI
   // --------------------------------------------------
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
       {/* Control Panel */}
-      <div style={{
-        position: "absolute",
-        zIndex: 1000,
-        background: "#fff",
-        padding: "10px",
-        borderRadius: "8px",
-        top: "10px",
-        left: "10px",
-        boxShadow: "0 0 5px rgba(0,0,0,0.3)",
-        width: "260px",
-      }}>
+      <div
+        style={{
+          position: "absolute",
+          zIndex: 1000,
+          background: "#fff",
+          padding: "10px",
+          borderRadius: "8px",
+          top: "10px",
+          left: "10px",
+          boxShadow: "0 0 5px rgba(0,0,0,0.3)",
+          width: "260px",
+        }}
+      >
         {/* Route generator */}
         <div style={{ marginBottom: "8px" }}>
           <label>Route length (miles): </label>
@@ -330,9 +338,15 @@ function App() {
         {/* Live stats */}
         {isTracking && (
           <>
-            <p>Distance: <strong>{liveDistance.toFixed(2)} mi</strong></p>
-            <p>Time: <strong>{formatTime(elapsedTime)}</strong></p>
-            <p>Pace: <strong>{pace ? pace.toFixed(2) : "–"} min/mi</strong></p>
+            <p>
+              Distance: <strong>{liveDistance.toFixed(2)} mi</strong>
+            </p>
+            <p>
+              Time: <strong>{formatTime(elapsedTime)}</strong>
+            </p>
+            <p>
+              Pace: <strong>{pace ? pace.toFixed(2) : "–"} min/mi</strong>
+            </p>
           </>
         )}
 
@@ -363,27 +377,36 @@ function App() {
       </div>
 
       {/* Map */}
-      <MapContainer center={position} zoom={15} style={{ height: "100%", width: "100%" }}>
+      <MapContainer
+        center={position}
+        zoom={15}
+        style={{ height: "100%", width: "100%" }}
+      >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
         <ChangeView center={position} />
-        <Marker position={position}><Popup>Start / End</Popup></Marker>
+        <Marker position={position}>
+          <Popup>Start / End</Popup>
+        </Marker>
 
-        {routes.length > 0 && routes.map((route, idx) => (
-          <GeoJSON
-            key={idx}
-            data={route}
-            style={{
-              color: idx === selectedRoute ? "#ff3b3b" : "#888",
-              weight: idx === selectedRoute ? 7 : 4,
-              opacity: idx === selectedRoute ? 0.95 : 0.6,
-            }}
-          />
-        ))}
+        {routes.length > 0 &&
+          routes.map((route, idx) => (
+            <GeoJSON
+              key={idx}
+              data={route}
+              style={{
+                color: idx === selectedRoute ? "#ff3b3b" : "#888",
+                weight: idx === selectedRoute ? 7 : 4,
+                opacity: idx === selectedRoute ? 0.95 : 0.6,
+              }}
+            />
+          ))}
 
-        {livePath.length > 1 && <Polyline positions={livePath} color="lime" weight={6} />}
+        {livePath.length > 1 && (
+          <Polyline positions={livePath} color="lime" weight={6} />
+        )}
       </MapContainer>
     </div>
   );
