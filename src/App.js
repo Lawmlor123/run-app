@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  useMap,
+  GeoJSON,
+} from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-import axios from "axios";
 
+// 💡 Configure Leaflet markers
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl:
@@ -18,14 +25,43 @@ function ChangeView({ center }) {
   return null;
 }
 
+// 🔹 Helper function for round-trip (loop) routes
+async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, ORS_API_KEY) {
+  const url =
+    "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
+  const body = {
+    coordinates: [[lng, lat]],
+    round_trip: {
+      length: distanceMeters,
+      points: 4 + seedOffset, // vary shape slightly
+      seed: Date.now() + seedOffset,
+    },
+    format: "geojson",
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: ORS_API_KEY,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) throw new Error("ORS round trip request failed");
+  const data = await response.json();
+  return data;
+}
+
 function App() {
   const [position, setPosition] = useState(null);
-  const [routes, setRoutes] = useState([]);         // 🔹 multiple routes
+  const [routes, setRoutes] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(0);
   const [distance, setDistance] = useState(1);
   const [loading, setLoading] = useState(true);
 
-  const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijc0YmI3ODc4MGI2MzRlZjliNWRjYmNiOTJlZjcyOWZmIiwiaCI6Im11cm11cjY0In0=";
+  // ⚠️ Replace this with your real key (or .env variable)
+  const ORS_API_KEY = process.env.REACT_APP_ORS_KEY;
 
   useEffect(() => {
     setLoading(true);
@@ -37,7 +73,7 @@ function App() {
       },
       (err) => {
         console.error("Location error:", err);
-        alert("Could not access GPS. Showing NYC as example.");
+        alert("Could not access GPS — using NYC as example.");
         setPosition([40.7128, -74.006]);
         setLoading(false);
       },
@@ -45,56 +81,30 @@ function App() {
     );
   }, []);
 
-  // 🔹 Generate multiple alternate routes
+  // 🔁 Generate 4 loop routes
   const generateRoutes = async () => {
     if (!position) return;
+    setLoading(true);
+    setRoutes([]);
 
-    const offset = distance / 100;
-    const url =
-      "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
+    try {
+      const distanceMeters = distance * 1609.34; // miles ➜ meters
 
-    // We'll create a few “targets” in different directions
-    const offsets = [
-      [offset, offset],
-      [-offset, offset],
-      [offset, -offset],
-      [-offset, -offset],
-    ];
+      const loops = await Promise.all([
+        generateRoundTripRoute(position[0], position[1], distanceMeters, 1, ORS_API_KEY),
+        generateRoundTripRoute(position[0], position[1], distanceMeters, 2, ORS_API_KEY),
+        generateRoundTripRoute(position[0], position[1], distanceMeters, 3, ORS_API_KEY),
+        generateRoundTripRoute(position[0], position[1], distanceMeters, 4, ORS_API_KEY),
+      ]);
 
-    const results = [];
-
-    for (let i = 0; i < offsets.length; i++) {
-      try {
-        const res = await axios.post(
-          url,
-          {
-            coordinates: [
-              [position[1], position[0]],
-              [position[1] + offsets[i][0], position[0] + offsets[i][1]],
-              [position[1], position[0]],
-            ],
-          },
-          {
-            headers: {
-              Authorization: ORS_API_KEY,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-
-        const coords = res.data.features[0].geometry.coordinates.map((c) => [
-          c[1],
-          c[0],
-        ]);
-
-        results.push(coords);
-      } catch (err) {
-        console.error("Route error:", err);
-      }
+      setRoutes(loops);
+      setSelectedRoute(0);
+    } catch (error) {
+      console.error("Error generating loop routes:", error);
+      alert("Could not generate loop routes. Please try again later.");
+    } finally {
+      setLoading(false);
     }
-
-    setRoutes(results);
-    setSelectedRoute(0);
   };
 
   if (loading) {
@@ -146,7 +156,6 @@ function App() {
           top: "10px",
           left: "10px",
           boxShadow: "0 0 5px rgba(0,0,0,0.3)",
-          width: "fit-content",
         }}
       >
         <div style={{ marginBottom: "8px" }}>
@@ -171,11 +180,11 @@ function App() {
               cursor: "pointer",
             }}
           >
-            Generate Routes
+            Generate Loop Routes
           </button>
         </div>
 
-        {/* 🔹 If multiple routes, show choice buttons */}
+        {/* Route selection buttons */}
         {routes.length > 1 && (
           <div>
             {routes.map((_, idx) => (
@@ -195,15 +204,19 @@ function App() {
                   cursor: "pointer",
                 }}
               >
-                Route {idx + 1}
+                Loop {idx + 1}
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {/* Map */}
-      <MapContainer center={position} zoom={14} style={{ height: "100%", width: "100%" }}>
+      {/* Interactive Map */}
+      <MapContainer
+        center={position}
+        zoom={14}
+        style={{ height: "100%", width: "100%" }}
+      >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
@@ -212,17 +225,18 @@ function App() {
           <>
             <ChangeView center={position} />
             <Marker position={position}>
-              <Popup>You are here</Popup>
+              <Popup>Start / End Point</Popup>
             </Marker>
           </>
         )}
+
         {routes.length > 0 && (
           <>
-            {routes.map((r, idx) => (
-              <Polyline
+            {routes.map((route, idx) => (
+              <GeoJSON
                 key={idx}
-                positions={r}
-                pathOptions={{
+                data={route}
+                style={{
                   color: idx === selectedRoute ? "#ff3b3b" : "#888",
                   weight: idx === selectedRoute ? 7 : 4,
                   opacity: idx === selectedRoute ? 0.95 : 0.6,
