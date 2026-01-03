@@ -25,19 +25,23 @@ function ChangeView({ center }) {
   return null;
 }
 
-// 🔹 Helper function for round-trip (loop) routes
+// 🔹 Updated helper for ORS v2.1 round_trip loops (nested under options)
 async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, ORS_API_KEY) {
-  const url =
-    "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
+  const url = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
+
   const body = {
     coordinates: [[lng, lat]],
-    round_trip: {
-      length: distanceMeters,
-      points: 4 + seedOffset, // vary shape slightly
-      seed: Date.now() + seedOffset,
+    options: {
+      round_trip: {
+        length: distanceMeters,
+        points: 4 + seedOffset,
+        seed: Date.now() + seedOffset,
+      },
     },
     format: "geojson",
   };
+
+  console.log("Requesting round trip:", body); // Debug log (optional)
 
   const response = await fetch(url, {
     method: "POST",
@@ -48,7 +52,12 @@ async function generateRoundTripRoute(lat, lng, distanceMeters, seedOffset = 0, 
     body: JSON.stringify(body),
   });
 
-  if (!response.ok) throw new Error("ORS round trip request failed");
+  if (!response.ok) {
+    const msg = await response.text();
+    console.error("ORS error:", msg);
+    throw new Error(`ORS request failed: ${msg}`);
+  }
+
   const data = await response.json();
   return data;
 }
@@ -60,7 +69,7 @@ function App() {
   const [distance, setDistance] = useState(1);
   const [loading, setLoading] = useState(true);
 
-  // ⚠️ Replace this with your real key (or .env variable)
+  // 🔐 Use secure environment variable
   const ORS_API_KEY = process.env.REACT_APP_ORS_KEY;
 
   useEffect(() => {
@@ -90,6 +99,13 @@ function App() {
     try {
       const distanceMeters = distance * 1609.34; // miles ➜ meters
 
+      // Require a minimum of 1 mile (1600m) for loops to work
+      if (distanceMeters < 1600) {
+        alert("Try at least 1 mile — loops need more distance to generate properly.");
+        setLoading(false);
+        return;
+      }
+
       const loops = await Promise.all([
         generateRoundTripRoute(position[0], position[1], distanceMeters, 1, ORS_API_KEY),
         generateRoundTripRoute(position[0], position[1], distanceMeters, 2, ORS_API_KEY),
@@ -101,7 +117,7 @@ function App() {
       setSelectedRoute(0);
     } catch (error) {
       console.error("Error generating loop routes:", error);
-      alert("Could not generate loop routes. Please try again later.");
+      alert("Could not generate loop routes. Please try again with a longer distance or different location.");
     } finally {
       setLoading(false);
     }
